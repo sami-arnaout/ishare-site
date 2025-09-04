@@ -1,7 +1,8 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/index.html" },
-    { "source": "/browse", "destination": "/iSharePhotos_browse_live_v2.html" },
-    { "source": "/upload", "destination": "/upload.html" }
+    { "source": "/", "destination": "/iSharePhotos_app.html" },
+    { "source": "/browse", "destination": "/iSharePhotos_app.html" },
+    { "source": "/upload", "destination": "/iSharePhotos_app.html" },
+    { "source": "/data", "destination": "/iSharePhotos_app.html" }
   ]
 }

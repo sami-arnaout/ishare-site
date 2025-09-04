@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iSharePhotos – Browse (Live from Supabase, ZIP fix)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#0b1220; --panel:#0f172a; --muted:#93a3b8; --text:#e6edf6; --chip:#19233a; --card:#0b1220; --accent:#38bdf8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width: 1200px; margin:0 auto; padding: 24px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  h1 { font-size: 1.5rem; margin:0; }
+  .panel { background:var(--panel); border:1px solid #1f2a44; border-radius:14px; padding:18px; margin-top:16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .input { background:#0b1326; color:#e6edf6; border:1px solid #1f2a44; border-radius:10px; padding:10px 12px; }
+  .btn { background:var(--accent); color:#07121e; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:700; }
+  .btn.secondary { background:#22314f; color:#e6edf6; }
+  .hint { color:var(--muted); font-size:.95rem; }
+  .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+  @media (max-width: 1000px){ .grid { grid-template-columns: repeat(2, 1fr);} }
+  @media (max-width: 560px){ .grid { grid-template-columns: 1fr;} }
+  .card { background:var(--card); border:1px solid #1f2a44; border-radius:12px; overflow:hidden; }
+  .thumb { width:100%; aspect-ratio: 4/3; object-fit: cover; display:block; background:#0a0f1d; }
+  .meta { padding:10px 12px; font-size:.9rem; color:var(--muted); display:flex; flex-direction:column; gap:6px; }
+  #map { height: 380px; border-radius:12px; border:1px solid #1f2a44; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>iSharePhotos – Browse (Live)</h1>
+    <div class="hint">ZIP search fixed: 5‑digit US ZIPs (e.g., 04107) resolve to the US.</div>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <div>
+        <div class="hint">Place or ZIP</div>
+        <div class="row">
+          <input id="placeQuery" class="input" type="text" placeholder="e.g., 04107 or Times Square" size="28">
+          <button id="searchPlace" class="btn">Search</button>
+          <button id="nearMe" class="btn secondary">Near me</button>
+        </div>
+      </div>
+      <div>
+        <div class="hint">Date range</div>
+        <div class="row">
+          <input id="fromDate" class="input" type="date">
+          <span>–</span>
+          <input id="toDate" class="input" type="date">
+        </div>
+      </div>
+      <div>
+        <div class="hint">Radius (km)</div>
+        <div class="row">
+          <input id="radiusKm" class="input" type="number" step="0.1" value="4.8" title="~3 miles">
+          <button id="useMapCenter" class="btn secondary">Use Map Center</button>
+        </div>
+        <div class="hint">Radius applies only when a center is set.</div>
+      </div>
+      <div style="margin-left:auto">
+        <div class="row">
+          <button id="refresh" class="btn secondary">Refresh</button>
+          <button id="applyFilters" class="btn">Filter</button>
+          <button id="resetFilters" class="btn secondary">Reset</button>
+        </div>
+      </div>
+    </div>
+    <div id="map" style="margin-top:10px"></div>
+    <div id="mapStatus" class="hint" style="margin-top:6px;"></div>
+    <div id="count" class="hint" style="margin-top:6px;"></div>
+    <div id="grid" class="grid" style="margin-top:12px;"></div>
+  </section>
+</div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// Use your Supabase details (public anon key is OK for pilot)
+const SUPABASE_URL  = 'https://mctkvmwaflsnohpjfmta.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jdGt2bXdhZmxzbm9ocGpmbXRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMTk5MTEsImV4cCI6MjA3MjU5NTkxMX0.6vUzyxbE8K4z6GH-_n5R7FUnWaD6Yha9eP45YZ0Ih28';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+const grid = document.getElementById('grid');
+const count = document.getElementById('count');
+
+// Map init
+let map = L.map('map', { zoomControl: true }).setView([20,0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+let photoLayer = L.layerGroup().addTo(map);
+let centerMarker = L.marker(map.getCenter(), {draggable:true, opacity:0.7}).addTo(map);
+map.on('move', ()=> { centerMarker.setLatLng(map.getCenter()); updateMapStatus(); });
+centerMarker.on('dragend', ()=> { map.panTo(centerMarker.getLatLng()); updateMapStatus(); });
+map.on('click', e => map.panTo(e.latlng));
+updateMapStatus();
+function updateMapStatus(){
+  const c = map.getCenter();
+  document.getElementById('mapStatus').textContent = `Map center: ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)} — zoom ${map.getZoom()}`;
+}
+
+// Place or ZIP search with US bias for 5-digit ZIPs
+async function geocodePlace(q){
+  const isZip = /^\d{5}$/.test(q); // keep leading zeros
+  if (isZip){
+    // Structured search: limit to US and ZIP code
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&postalcode=${encodeURIComponent(q)}&limit=1`;
+    const res = await fetch(url);
+    if (res.ok){
+      const data = await res.json();
+      if (data?.length) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), label: data[0].display_name };
+    }
+    // Fallback: plain query with explicit country
+    const url2 = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q+' United States')}&countrycodes=us&limit=1`;
+    const res2 = await fetch(url2);
+    const data2 = await res2.json();
+    if (data2?.length) return { lat: parseFloat(data2[0].lat), lon: parseFloat(data2[0].lon), label: data2[0].display_name };
+    throw new Error('ZIP not found');
+  } else {
+    // Bias to US first; if nothing, try global
+    const urlUS = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=us&limit=1`;
+    let res = await fetch(urlUS);
+    let data = res.ok ? await res.json() : [];
+    if (!data?.length){
+      const urlAny = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+      res = await fetch(urlAny); data = res.ok ? await res.json() : [];
+    }
+    if (data?.length) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), label: data[0].display_name };
+    throw new Error('Place not found');
+  }
+}
+document.getElementById('searchPlace').onclick = async () => {
+  const q = document.getElementById('placeQuery').value.trim(); if(!q) return;
+  try { const r = await geocodePlace(q); map.setView([r.lat, r.lon], 13); centerMarker.setLatLng([r.lat,r.lon]); updateMapStatus(); }
+  catch(e){ document.getElementById('mapStatus').textContent = e.message; }
+};
+document.getElementById('nearMe').onclick = () => {
+  if (!navigator.geolocation) return alert('Geolocation not supported');
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude, longitude } = pos.coords;
+    map.setView([latitude, longitude], 15);
+    centerMarker.setLatLng([latitude, longitude]);
+    updateMapStatus();
+  }, ()=> alert('Unable to get your location'));
+};
+document.getElementById('useMapCenter').onclick = () => {
+  const c = map.getCenter(); latCenter = c.lat; lonCenter = c.lng;
+};
+
+// Fetch data from Supabase
+let all = [];
+async function fetchAll(){
+  const { data, error } = await sb
+    .from('photos')
+    .select('id,lat,lon,taken_at,thumb_path,storage_path')
+    .order('taken_at', { ascending: false })
+    .limit(1000);
+  if (error) throw error;
+  all = (data || []).map(row => {
+    let thumbUrl = null;
+    if (row.thumb_path) {
+      thumbUrl = sb.storage.from('photos-thumb').getPublicUrl(row.thumb_path).data.publicUrl;
+    } else if (row.storage_path) {
+      thumbUrl = sb.storage.from('photos-original').getPublicUrl(row.storage_path).data.publicUrl;
+    }
+    return {
+      id: row.id, lat: row.lat, lon: row.lon,
+      date: row.taken_at?.slice(0,10) || '',
+      time: row.taken_at ? new Date(row.taken_at).toTimeString().slice(0,5) : '',
+      thumbUrl
+    };
+  });
+}
+
+function distanceKm(lat1, lon1, lat2, lon2){
+  const toRad = d => d*Math.PI/180, R=6371;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+let latCenter = null, lonCenter = null;
+function applyFilters(){
+  const from = document.getElementById('fromDate').value;
+  const to = document.getElementById('toDate').value;
+  const rad = parseFloat(document.getElementById('radiusKm').value);
+  const useGeo = (latCenter!=null && lonCenter!=null && !isNaN(rad));
+  const list = all.filter(it => {
+    const okDate = (!from || it.date >= from) && (!to || it.date <= to);
+    const okGeo = !useGeo || distanceKm(it.lat, it.lon, latCenter, lonCenter) <= rad;
+    return okDate && okGeo;
+  });
+  render(list);
+}
+
+function render(list){
+  grid.innerHTML='';
+  if(list.length === 0){
+    grid.innerHTML = '<div class="hint">No photos match. Try widening date or radius.</div>';
+  } else {
+    for (const it of list){
+      const el = document.createElement('div');
+      el.className = 'card';
+      const img = it.thumbUrl ? `<img class="thumb" src="${it.thumbUrl}" alt="photo">` : `<div class="thumb"></div>`;
+      el.innerHTML = `${img}
+        <div class="meta">
+          <div>${it.date} ${it.time}</div>
+          <div class="hint">lat ${it.lat.toFixed(5)}, lon ${it.lon.toFixed(5)}</div>
+        </div>`;
+      grid.appendChild(el);
+    }
+  }
+  photoLayer.clearLayers();
+  for (const it of list){
+    const m = L.marker([it.lat, it.lon]).addTo(photoLayer);
+    const img = it.thumbUrl ? `<img src="${it.thumbUrl}" style="width:100%;border-radius:8px;margin-top:6px;">` : '';
+    m.bindPopup(`<div style="max-width:240px;"><strong>${it.date} ${it.time}</strong>${img}</div>`);
+  }
+  if (list.length){
+    const b = L.latLngBounds(list.map(i => [i.lat, i.lon]));
+    map.fitBounds(b, { padding:[20,20] });
+  }
+  count.textContent = `${list.length} photo(s)`;
+}
+
+document.getElementById('applyFilters').onclick = applyFilters;
+document.getElementById('resetFilters').onclick = () => { 
+  document.getElementById('fromDate').value='';
+  document.getElementById('toDate').value='';
+  latCenter = lonCenter = null;
+  render(all);
+};
+document.getElementById('refresh').onclick = async () => { await fetchAll(); render(all); };
+
+await fetchAll(); render(all);
+</script>
+</body>
+</html>

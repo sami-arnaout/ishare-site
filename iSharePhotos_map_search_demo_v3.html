@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iSharePhotos – Map, Place & Date Search v3 (JPEG only)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#0b1220; --panel:#0f172a; --muted:#93a3b8; --text:#e6edf6; --chip:#19233a; --card:#0b1220; --accent:#38bdf8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width: 1200px; margin:0 auto; padding: 24px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  h1 { font-size: 1.5rem; margin:0; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabbtn { background:var(--chip); color:var(--text); border:1px solid #1f2a44; border-radius:10px; padding:10px 14px; cursor:pointer; }
+  .tabbtn.active { background:var(--accent); color:#06101c; border-color:var(--accent); font-weight:700; }
+  .panel { background:var(--panel); border:1px solid #1f2a44; border-radius:14px; padding:18px; margin-top:16px; }
+  .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+  @media (max-width: 1000px){ .grid { grid-template-columns: repeat(2, 1fr);} }
+  @media (max-width: 560px){ .grid { grid-template-columns: 1fr;} }
+  .card { background:var(--card); border:1px solid #1f2a44; border-radius:12px; overflow:hidden; }
+  .thumb { width:100%; aspect-ratio: 4/3; object-fit: cover; display:block; background:#0a0f1d; }
+  .meta { padding:10px 12px; font-size:.9rem; color:var(--muted); display:flex; flex-direction:column; gap:6px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input, button { font: inherit; }
+  .btn { background:var(--accent); color:#07121e; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:700; }
+  .btn.secondary { background:#22314f; color:#e6edf6; }
+  .hint { color:var(--muted); font-size:.95rem; }
+  .footer { text-align:center; margin-top:16px; color:var(--muted); }
+  #map { height: 360px; border-radius:12px; border:1px solid #1f2a44; margin-top:8px; }
+  .input { background:#0b1326; color:#e6edf6; border:1px solid #1f2a44; border-radius:10px; padding:10px 12px; }
+  .chip { display:inline-block; background:var(--chip); border:1px solid #1f2a44; color:var(--muted); padding:6px 10px; border-radius:999px; margin:4px 6px 0 0; font-size:.85rem; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>iSharePhotos – Map, Place & Date Search v3</h1>
+      <div class="tabs">
+        <button class="tabbtn active" data-tab="upload">Upload</button>
+        <button class="tabbtn" data-tab="browse">Browse</button>
+        <button class="tabbtn" data-tab="data">Data</button>
+      </div>
+    </header>
+
+    <section id="upload" class="panel">
+      <div class="row">
+        <label for="fileInput" class="btn">Choose Photos</label>
+        <input id="fileInput" type="file" accept="image/jpeg" multiple style="display:none">
+        <span class="hint">JPEGs only in this demo. Photos must include GPS in EXIF.</span>
+      </div>
+      <div id="dropzone" style="border:2px dashed #22406a;border-radius:12px;padding:18px;text-align:center;background:#0b1326;margin-top:10px" tabindex="0">
+        Drag & drop JPEGs here (or click “Choose Photos”)
+      </div>
+      <div id="log" class="hint" style="margin-top:12px;"></div>
+      <details style="margin-top:10px;"><summary>Show last debug</summary><pre id="debug" style="white-space:pre-wrap;word-break:break-word;background:#0b1326;padding:10px;border-radius:10px;border:1px solid #1f2a44;color:#9ab5d6;"></pre></details>
+
+      <div class="panel" style="margin-top:16px;">
+        <div class="row" style="justify-content:space-between;">
+          <div class="hint">Accepted photos (GPS found):</div>
+          <button id="clearRecent" class="btn secondary small">Clear recent list</button>
+        </div>
+        <div id="recentGrid" class="grid"></div>
+      </div>
+    </section>
+
+    <section id="browse" class="panel" style="display:none">
+      <div class="row" style="align-items:flex-end;">
+        <div>
+          <div class="hint">Place search</div>
+          <div class="row">
+            <input id="placeQuery" class="input" type="text" placeholder="e.g., Times Square" size="28">
+            <button id="searchPlace" class="btn">Search</button>
+          </div>
+        </div>
+        <div>
+          <div class="hint">Date range</div>
+          <div class="row">
+            <input id="fromDate" class="input" type="date">
+            <span>–</span>
+            <input id="toDate" class="input" type="date">
+          </div>
+        </div>
+        <div>
+          <div class="hint">Location radius</div>
+          <div class="row">
+            <input id="radiusKm" class="input" type="number" step="0.1" value="4.8" title="~3 miles">
+            <button id="useMapCenter" class="btn secondary">Use Map Center</button>
+          </div>
+          <div class="hint">Tip: radius applies only when a center is set.</div>
+        </div>
+        <div style="margin-left:auto">
+          <div class="row">
+            <button id="applyFilters" class="btn">Filter</button>
+            <button id="resetFilters" class="btn secondary">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="map"></div>
+      <div id="mapStatus" class="hint" style="margin-top:6px;"></div>
+      <div id="browseGrid" class="grid" style="margin-top:12px;"></div>
+    </section>
+
+    <section id="data" class="panel" style="display:none">
+      <div class="row">
+        <button id="exportBtn" class="btn">Export Data (JSON)</button>
+        <input id="importFile" type="file" accept="application/json" style="display:none">
+        <button id="importBtn" class="btn secondary">Import Data</button>
+        <button id="clearAll" class="btn secondary">Clear All</button>
+        <span class="hint" style="margin-left:auto">Local storage only. Map & geocoder require internet.</span>
+      </div>
+      <div style="margin-top:10px;">
+        <span class="chip">GPS strict mode</span>
+        <span class="chip">Map + Place search</span>
+        <span class="chip">Date range filter</span>
+        <span class="chip">Default view: show all</span>
+      </div>
+    </section>
+
+    <div class="footer">© iSharePhotos – Map & Place Search v3.</div>
+  </div>
+
+<script>
+/* JPEG EXIF parser (GPS + DateTimeOriginal) */
+function parseEXIF(arrayBuffer){
+  const data = new DataView(arrayBuffer);
+  if (data.getUint8(0) !== 0xFF || data.getUint8(1) !== 0xD8) return null;
+  let offset = 2, exifOffset = -1;
+  while (offset + 4 < data.byteLength){
+    if (data.getUint8(offset) !== 0xFF) break;
+    const marker = data.getUint8(offset+1);
+    const size = data.getUint16(offset+2, false);
+    if (marker === 0xE1){
+      const sig = [0x45,0x78,0x69,0x66,0x00,0x00];
+      let ok = true; for (let i=0;i<6;i++){ if (data.getUint8(offset+4+i)!==sig[i]){ ok=false; break; } }
+      if (ok){ exifOffset = offset + 10; break; }
+    }
+    offset += 2 + size;
+  }
+  if (exifOffset < 0) return null;
+  const tiff = exifOffset;
+  const big = (data.getUint16(tiff,false) === 0x4D4D);
+  const g16=(o)=>data.getUint16(o,!big), g32=(o)=>data.getUint32(o,!big), gS32=(o)=>data.getInt32(o,!big);
+  function readIFD(ptr){
+    const count=g16(ptr); const tags={};
+    for (let i=0;i<count;i++){ const e=ptr+2+i*12, tag=g16(e), type=g16(e+2), num=g32(e+4), valOff=e+8; tags[tag]=readVal(type,num,valOff); }
+    const gpsIFDOffset=(typeof tags[0x8825]==='number') ? tags[0x8825]+tiff : null;
+    const exifIFDOffset=(typeof tags[0x8769]==='number') ? tags[0x8769]+tiff : null;
+    return {tags, gpsIFDOffset, exifIFDOffset};
+  }
+  function readVal(type,count,ptr){ const sz={1:1,2:1,3:2,4:4,5:8,7:1,9:4,10:8}[type]||1; const total=sz*count; if (total>4) ptr=g32(ptr)+tiff;
+    switch(type){
+      case 2:{let s=''; for(let i=0;i<count;i++){ const c=data.getUint8(ptr+i); if(c===0)break; s+=String.fromCharCode(c); } return s;}
+      case 3:{if(count===1)return g16(ptr); const a=[]; for(let i=0;i<count;i++) a.push(g16(ptr+i*2)); return a;}
+      case 4:{if(count===1)return g32(ptr); const a=[]; for(let i=0;i<count;i++) a.push(g32(ptr+i*4)); return a;}
+      case 5:{if(count===1)return [g32(ptr),g32(ptr+4)]; const a=[]; for(let i=0;i<count;i++){a.push([g32(ptr+i*8),g32(ptr+i*8+4)]);} return a;}
+      case 9:{if(count===1)return gS32(ptr); const a=[]; for(let i=0;i<count;i++) a.push(gS32(ptr+i*4)); return a;}
+      case 10:{if(count===1)return [gS32(ptr),gS32(ptr+4)]; const a=[]; for(let i=0;i<count;i++){a.push([gS32(ptr+i*8),gS32(ptr+i*8+4)]);} return a;}
+      default:{if(count===1)return data.getUint8(ptr); const a=[]; for(let i=0;i<count;i++) a.push(data.getUint8(ptr+i)); return a;}
+    }
+  }
+  function ascii(v){ return (typeof v==='string') ? v : null; }
+  function ratArr(v){ if(!v)return null; const a=Array.isArray(v[0])?v:[v]; if(a.length<3)return null; return a.slice(0,3).map(([n,d])=>d?n/d:0); }
+  function dms([d,m,s]){ return d + m/60 + s/3600; }
+  const ifd0 = readIFD(g32(tiff+4)+tiff);
+  let when=null, gps=null;
+  if (ifd0.exifIFDOffset){ const exif=readIFD(ifd0.exifIFDOffset).tags; when=ascii(exif[0x9003]) || ascii(exif[0x0132]) || null; }
+  if (ifd0.gpsIFDOffset){
+    const g = readIFD(ifd0.gpsIFDOffset).tags;
+    const latRef=(ascii(g[0x0001])||'N').trim().toUpperCase();
+    const lonRef=(ascii(g[0x0003])||'E').trim().toUpperCase();
+    const lat=ratArr(g[0x0002]); const lon=ratArr(g[0x0004]);
+    if (lat && lon){ gps={latitude:dms(lat)*(latRef==='S'? -1:1), longitude:dms(lon)*(lonRef==='W'? -1:1)}; }
+  }
+  return {gps, when};
+}
+function parseExifDateSafe(s, fallbackMs){
+  if (!s || typeof s !== 'string') return new Date(fallbackMs);
+  const m = s.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:([+-]\d{2}):?(\d{2})|Z)?$/);
+  if (!m) return new Date(fallbackMs);
+  const [_, Y, Mo, D, H, Mi, S, tzH, tzM] = m;
+  const d = new Date(+Y, +Mo-1, +D, +H, +Mi, +S);
+  if (tzH){ const off = (+tzH)*60 + (tzM? +tzM : 0); d.setMinutes(d.getMinutes()-off); }
+  return d;
+}
+
+/* Local DB */
+const DB_KEY = 'ishare_map_date_demo_v3';
+let db = loadDB();
+function loadDB(){ try { return JSON.parse(localStorage.getItem(DB_KEY)) || []; } catch(e){ return []; } }
+function saveDB(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+/* Tabs */
+const tabs = document.querySelectorAll('.tabbtn');
+const sections = { upload: document.getElementById('upload'), browse: document.getElementById('browse'), data: document.getElementById('data') };
+tabs.forEach(btn => btn.addEventListener('click', () => {
+  tabs.forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  Object.values(sections).forEach(s => s.style.display='none');
+  sections[btn.dataset.tab].style.display='';
+  if(btn.dataset.tab==='browse') { initMapOnce(); showAll(); }
+}));
+
+/* Upload */
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+const recentGrid = document.getElementById('recentGrid');
+const log = document.getElementById('log');
+const debug = document.getElementById('debug');
+document.getElementById('clearRecent').onclick = () => recentGrid.innerHTML='';
+
+fileInput.addEventListener('change', (e)=> processFiles(e.target.files));
+dropzone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.style.borderColor='#38bdf8'; });
+dropzone.addEventListener('dragleave', ()=> dropzone.style.borderColor='#22406a');
+dropzone.addEventListener('drop', (e)=>{ e.preventDefault(); dropzone.style.borderColor='#22406a'; processFiles(e.dataTransfer.files); });
+dropzone.addEventListener('click', ()=> fileInput.click());
+
+async function processFiles(fileList){
+  const files = Array.from(fileList || []).filter(f => /jpe?g$/i.test(f.name || '') || f.type==='image/jpeg');
+  let accepted = 0, rejected = 0;
+  for (const file of files){
+    try {
+      const arr = await file.arrayBuffer();
+      const parsed = parseEXIF(arr);
+      debug.textContent = JSON.stringify({name:file.name, parsed}, null, 2);
+      if(!parsed || !parsed.gps){ rejected++; continue; }
+      const dt = parseExifDateSafe(parsed.when, file.lastModified);
+      const dataUrl = await blobToThumbnail(file, 1280);
+      const rec = { id: crypto.randomUUID(), dataUrl, date: dt.toISOString().slice(0,10), time: dt.toTimeString().slice(0,5), lat: parsed.gps.latitude, lon: parsed.gps.longitude, srcName: file.name || 'upload' };
+      db.push(rec); saveDB(); addRecent(rec); accepted++;
+    } catch(err){ console.error(err); debug.textContent = 'Error: ' + (err?.message || String(err)); rejected++; }
+  }
+  log.innerHTML = `${accepted} accepted, <span class="hint">${rejected} rejected (no GPS or unreadable)</span>`;
+}
+function blobToThumbnail(blob, maxDim=1280){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => reject(new Error('Image decode failed'));
+    img.src = URL.createObjectURL(blob);
+  });
+}
+function addRecent(rec){
+  const card = document.createElement('div');
+  card.className = 'card';
+  const thumb = rec.dataUrl ? `<img class="thumb" src="${rec.dataUrl}" alt="preview">` : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#7aa2d8">No preview</div>`;
+  card.innerHTML = `${thumb}
+    <div class="meta">
+      <div>${rec.date} ${rec.time}</div>
+      <div class="hint">lat ${rec.lat.toFixed(5)}, lon ${rec.lon.toFixed(5)}</div>
+      <div class="hint small">${rec.srcName}</div>
+    </div>`;
+  recentGrid.prepend(card);
+}
+
+/* Map + Place search */
+let map, centerMarker, photoLayer;
+function initMapOnce(){
+  if (map) return;
+  map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  photoLayer = L.layerGroup().addTo(map);
+  centerMarker = L.marker(map.getCenter(), {draggable:true, opacity:0.7}).addTo(map);
+  map.on('move', ()=> { centerMarker.setLatLng(map.getCenter()); updateMapStatus(); });
+  centerMarker.on('dragend', ()=> { map.panTo(centerMarker.getLatLng()); updateMapStatus(); });
+  map.on('click', (e)=> { map.panTo(e.latlng); });
+  updateMapStatus();
+}
+function updateMapStatus(){
+  const c = map.getCenter();
+  document.getElementById('mapStatus').textContent = `Map center: ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)} — zoom ${map.getZoom()}`;
+}
+
+async function geocodePlace(q){
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+  const res = await fetch(url, {headers:{'Accept':'application/json'}});
+  if(!res.ok) throw new Error('Geocoder error');
+  const data = await res.json();
+  if(!data || !data.length) throw new Error('No results');
+  const {lat, lon, display_name} = data[0];
+  return {lat: parseFloat(lat), lon: parseFloat(lon), label: display_name};
+}
+document.getElementById('searchPlace').onclick = async () => {
+  const q = document.getElementById('placeQuery').value.trim();
+  if(!q) return;
+  try{
+    const r = await geocodePlace(q);
+    map.setView([r.lat, r.lon], 15);
+    centerMarker.setLatLng([r.lat, r.lon]);
+    updateMapStatus();
+    document.getElementById('mapStatus').textContent += ` — ${r.label}`;
+  } catch(e){
+    document.getElementById('mapStatus').textContent = 'Place not found.';
+  }
+};
+document.getElementById('useMapCenter').onclick = () => {
+  const c = map.getCenter();
+  document.getElementById('latCenter').value = c.lat.toFixed(6);
+  document.getElementById('lonCenter').value = c.lng.toFixed(6);
+};
+
+/* Browse & Filter */
+const browseGrid = document.getElementById('browseGrid');
+document.getElementById('applyFilters').onclick = renderBrowse;
+document.getElementById('resetFilters').onclick = () => { clearFilters(); showAll(); };
+
+// Hidden inputs to reuse previous logic
+const hidden = document.createElement('div');
+hidden.style.display = 'none';
+hidden.innerHTML = `<input id="latCenter" type="text"><input id="lonCenter" type="text">`;
+document.body.appendChild(hidden);
+
+function clearFilters(){
+  document.getElementById('fromDate').value = '';
+  document.getElementById('toDate').value = '';
+  document.getElementById('latCenter').value = '';
+  document.getElementById('lonCenter').value = '';
+  document.getElementById('radiusKm').value = 4.8; // default ~3 miles
+}
+
+function showAll(){
+  // Grid
+  const all = [...db].sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
+  renderGrid(all);
+  // Map markers
+  drawMarkers(all);
+  // Fit to bounds if any
+  fitToMarkers(all);
+}
+
+function renderBrowse(){
+  const from = document.getElementById('fromDate').value;
+  const to = document.getElementById('toDate').value;
+  const latC = parseFloat(document.getElementById('latCenter').value);
+  const lonC = parseFloat(document.getElementById('lonCenter').value);
+  const rad = parseFloat(document.getElementById('radiusKm').value);
+  const useGeo = !(isNaN(latC) || isNaN(lonC) || isNaN(rad));
+  const filtered = db.filter(item => {
+    const okDate = (!from || item.date >= from) && (!to || item.date <= to);
+    const okGeo = !useGeo || (distanceKm(item.lat, item.lon, latC, lonC) <= rad);
+    return okDate && okGeo;
+  }).sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
+  renderGrid(filtered);
+  drawMarkers(filtered);
+  fitToMarkers(filtered);
+}
+
+function renderGrid(list){
+  browseGrid.innerHTML='';
+  if(list.length===0){
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'No photos match. Try widening the date range or radius.';
+    browseGrid.appendChild(empty);
+    return;
+  }
+  for (const item of list){
+    const el = document.createElement('div');
+    el.className = 'card';
+    const thumb = item.dataUrl ? `<img class="thumb" src="${item.dataUrl}" alt="photo">` : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#7aa2d8">No preview</div>`;
+    el.innerHTML = `${thumb}
+      <div class="meta">
+        <div>${item.date} ${item.time}</div>
+        <div class="hint">lat ${item.lat.toFixed(5)}, lon ${item.lon.toFixed(5)}</div>
+        <div class="row">
+          <button class="btn secondary small" data-id="${item.id}">Delete</button>
+        </div>
+      </div>`;
+    el.querySelector('button').onclick = () => {
+      if(confirm('Delete this photo from your local library?')){
+        db = db.filter(x => x.id !== item.id);
+        saveDB(); showAll();
+      }
+    };
+    browseGrid.appendChild(el);
+  }
+}
+
+function drawMarkers(list){
+  if (!map) return;
+  photoLayer.clearLayers();
+  for (const item of list){
+    const m = L.marker([item.lat, item.lon]).addTo(photoLayer);
+    m.bindPopup(`<div style="max-width:240px;"><div><strong>${item.date} ${item.time}</strong></div>${item.dataUrl ? `<img src="${item.dataUrl}" style="width:100%;border-radius:8px;margin-top:6px;">` : ''}</div>`);
+  }
+}
+
+function fitToMarkers(list){
+  if (!map || list.length===0) return;
+  const bounds = L.latLngBounds(list.map(i => [i.lat, i.lon]));
+  map.fitBounds(bounds, { padding:[20,20] });
+}
+
+function distanceKm(lat1, lon1, lat2, lon2){
+  const toRad = d => d*Math.PI/180;
+  const R = 6371;
+  const dLat = toRad(lat2-lat1);
+  const dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*sin2(dLon/2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+  function sin2(x){ const s=Math.sin(x); return s*s; }
+}
+
+/* Data mgmt */
+document.getElementById('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(db)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ishare_map_date_demo_data_v3.json'; a.click(); URL.revokeObjectURL(a.href);
+};
+document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+document.getElementById('importFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  try { const text = await file.text(); const data = JSON.parse(text);
+    if(Array.isArray(data)){ db = data; saveDB(); showAll(); alert('Imported.'); } else { alert('Invalid file.'); }
+  } catch(err){ alert('Could not import.'); }
+});
+document.getElementById('clearAll').onclick = () => {
+  if(confirm('This will remove ALL locally saved photos & metadata. Proceed?')){ db = []; saveDB(); showAll(); recentGrid.innerHTML=''; alert('Cleared.'); }
+};
+
+// Init
+showAll();
+</script>
+</body>
+</html>

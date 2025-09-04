@@ -8,40 +8,40 @@
   <button id="go">Upload</button>
   <pre id="out" style="white-space:pre-wrap;background:#f5f7fb;padding:12px;border-radius:8px"></pre>
 
-  <!-- EXIF & HEIC helpers (UMD globals: window.exifr, window.heic2any) -->
-  <script src="https://unpkg.com/exifr/dist/exifr.umd.js"></script>
-  <script src="https://unpkg.com/heic2any/dist/heic2any.min.js"></script>
-
-  <!-- Supabase as ES module -->
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import exifr from 'https://esm.sh/exifr@7?bundle';
+    import heic2any from 'https://esm.sh/heic2any@0.0.4?bundle';
 
-    // TODO: replace with your Supabase values (Settings → API Keys)
+    // ⬇️ Paste YOUR values (keep quotes)
     const SUPABASE_URL  = 'https://mctkvmwaflsnohpjfmta.supabase.co';
     const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jdGt2bXdhZmxzbm9ocGpmbXRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMTk5MTEsImV4cCI6MjA3MjU5NTkxMX0.6vUzyxbE8K4z6GH-_n5R7FUnWaD6Yha9eP45YZ0Ih28';
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
-
-    const $ = id => document.getElementById(id);
+    const $ = (id) => document.getElementById(id);
     const log = (...a) => { $('out').textContent += a.join(' ') + '\n'; };
+
     log('Ready. Pick a file and click Upload.');
+    log('exifr loaded:', !!exifr, 'heic2any loaded:', !!heic2any);
 
     async function readExif(file){
       const [gps, meta] = await Promise.all([
-        window.exifr.gps(file),
-        window.exifr.parse(file, ['DateTimeOriginal','Make','Model'])
+        exifr.gps(file),
+        exifr.parse(file, ['DateTimeOriginal','Make','Model'])
       ]);
       if (!gps || typeof gps.latitude !== 'number' || typeof gps.longitude !== 'number') {
         throw new Error('No GPS found in EXIF');
       }
-      const when = meta?.DateTimeOriginal ? new Date(meta.DateTimeOriginal) : new Date(file.lastModified);
+      const when = meta?.DateTimeOriginal
+        ? new Date(meta.DateTimeOriginal)
+        : new Date(file.lastModified);
       return { lat:gps.latitude, lon:gps.longitude, takenAt:when, make:meta?.Make, model:meta?.Model };
     }
 
     async function toJpegIfHeic(file){
       const name = (file.name || '').toLowerCase();
       if (name.endsWith('.heic') || name.endsWith('.heif') || /heic|heif/i.test(file.type)) {
-        const out = await window.heic2any({ blob:file, toType:'image/jpeg', quality:0.9 });
+        const out = await heic2any({ blob:file, toType:'image/jpeg', quality:0.9 });
         return new File([out], (file.name||'photo').replace(/\.(heic|heif)$/i,'.jpg'), { type:'image/jpeg' });
       }
       return file;
@@ -58,17 +58,16 @@
       return new File([blob], 'thumb.jpg', {type:'image/jpeg'});
     }
 
-    function iso(d){ return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString(); }
+    const iso = (d) => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString();
 
     $('go').onclick = async () => {
       $('out').textContent = '';
       const file = $('file').files[0];
       if (!file) { log('Pick a file first.'); return; }
-
       try {
         log('Reading EXIF...');
-        const exif = await readExif(file);
-        log('GPS:', exif.lat.toFixed(6), exif.lon.toFixed(6), 'Time:', exif.takenAt.toISOString());
+        const ex = await readExif(file);
+        log('GPS:', ex.lat.toFixed(6), ex.lon.toFixed(6), 'Time:', ex.takenAt.toISOString());
 
         log('Converting to JPEG if needed...');
         const jpeg = await toJpegIfHeic(file);
@@ -82,29 +81,28 @@
         const thumbPath = `thumb/${stamp}-thumb.jpg`;
 
         log('Uploading original...');
-        let { error: e1 } = await sb.storage.from('photos-original').upload(origPath, jpeg, { contentType:'image/jpeg' });
+        const { error: e1 } = await sb.storage.from('photos-original').upload(origPath, jpeg, { contentType:'image/jpeg' });
         if (e1) throw e1;
 
         log('Uploading thumbnail...');
-        let { error: e2 } = await sb.storage.from('photos-thumb').upload(thumbPath, thumb, { contentType:'image/jpeg' });
+        const { error: e2 } = await sb.storage.from('photos-thumb').upload(thumbPath, thumb, { contentType:'image/jpeg' });
         if (e2) throw e2;
 
         log('Saving metadata...');
-        const row = {
+        const { error: e3 } = await sb.from('photos').insert({
           user_id: null,
-          lat: exif.lat, lon: exif.lon,
-          taken_at: iso(exif.takenAt),
+          lat: ex.lat, lon: ex.lon,
+          taken_at: iso(ex.takenAt),
           storage_path: origPath,
           thumb_path: thumbPath,
-          device_make: exif.make || null,
-          device_model: exif.model || null
-        };
-        const { error: e3 } = await sb.from('photos').insert(row);
+          device_make: ex.make || null,
+          device_model: ex.model || null
+        });
         if (e3) throw e3;
 
         log('✅ Done. Photo saved & searchable.');
       } catch (err) {
-        log('❌', err.message || String(err));
+        log('❌ ' + (err?.message || String(err)));
       }
     };
   </script>

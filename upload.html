@@ -8,37 +8,45 @@
   <button id="go">Upload</button>
   <pre id="out" style="white-space:pre-wrap;background:#f5f7fb;padding:12px;border-radius:8px"></pre>
 
-  <!-- Supabase client -->
-  <script src="https://esm.sh/@supabase/supabase-js@2"></script>
-  <!-- EXIF & HEIC helpers -->
+  <!-- EXIF & HEIC helpers (UMD globals: window.exifr, window.heic2any) -->
   <script src="https://unpkg.com/exifr/dist/exifr.umd.js"></script>
   <script src="https://unpkg.com/heic2any/dist/heic2any.min.js"></script>
 
-  <script>
-    // TODO: replace with your values from Supabase → Settings → API
-    const SUPABASE_URL  = "https://mctkvmwaflsnohpjfmta.supabase.co";
-    const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jdGt2bXdhZmxzbm9ocGpmbXRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMTk5MTEsImV4cCI6MjA3MjU5NTkxMX0.6vUzyxbE8K4z6GH-_n5R7FUnWaD6Yha9eP45YZ0Ih28";
-    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  <!-- Supabase as ES module -->
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    // TODO: replace with your Supabase values (Settings → API Keys)
+    const SUPABASE_URL  = 'https://mctkvmwaflsnohpjfmta.supabase.co';
+    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jdGt2bXdhZmxzbm9ocGpmbXRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMTk5MTEsImV4cCI6MjA3MjU5NTkxMX0.6vUzyxbE8K4z6GH-_n5R7FUnWaD6Yha9eP45YZ0Ih28';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
     const $ = id => document.getElementById(id);
-    const log = (...a) => $('out').textContent += a.join(' ') + '\n';
+    const log = (...a) => { $('out').textContent += a.join(' ') + '\n'; };
+    log('Ready. Pick a file and click Upload.');
 
     async function readExif(file){
-      const [gps, meta] = await Promise.all([ exifr.gps(file), exifr.parse(file, ['DateTimeOriginal','Make','Model']) ]);
+      const [gps, meta] = await Promise.all([
+        window.exifr.gps(file),
+        window.exifr.parse(file, ['DateTimeOriginal','Make','Model'])
+      ]);
       if (!gps || typeof gps.latitude !== 'number' || typeof gps.longitude !== 'number') {
         throw new Error('No GPS found in EXIF');
       }
       const when = meta?.DateTimeOriginal ? new Date(meta.DateTimeOriginal) : new Date(file.lastModified);
       return { lat:gps.latitude, lon:gps.longitude, takenAt:when, make:meta?.Make, model:meta?.Model };
     }
+
     async function toJpegIfHeic(file){
       const name = (file.name || '').toLowerCase();
       if (name.endsWith('.heic') || name.endsWith('.heif') || /heic|heif/i.test(file.type)) {
-        const out = await heic2any({ blob:file, toType:'image/jpeg', quality:0.9 });
+        const out = await window.heic2any({ blob:file, toType:'image/jpeg', quality:0.9 });
         return new File([out], (file.name||'photo').replace(/\.(heic|heif)$/i,'.jpg'), { type:'image/jpeg' });
       }
       return file;
     }
+
     async function makeThumb(jpeg){
       const img = new Image(), url = URL.createObjectURL(jpeg);
       await new Promise((ok,err)=>{ img.onload=ok; img.onerror=err; img.src=url; });
@@ -49,12 +57,14 @@
       URL.revokeObjectURL(url);
       return new File([blob], 'thumb.jpg', {type:'image/jpeg'});
     }
+
     function iso(d){ return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString(); }
 
     $('go').onclick = async () => {
       $('out').textContent = '';
       const file = $('file').files[0];
       if (!file) { log('Pick a file first.'); return; }
+
       try {
         log('Reading EXIF...');
         const exif = await readExif(file);
@@ -67,7 +77,8 @@
         const thumb = await makeThumb(jpeg);
 
         const stamp = Date.now();
-        const origPath  = `orig/${stamp}-${(jpeg.name||'photo.jpg').replace(/[^a-z0-9_.-]/gi,'_')}`;
+        const safeName = (jpeg.name||'photo.jpg').replace(/[^a-z0-9_.-]/gi,'_');
+        const origPath  = `orig/${stamp}-${safeName}`;
         const thumbPath = `thumb/${stamp}-thumb.jpg`;
 
         log('Uploading original...');

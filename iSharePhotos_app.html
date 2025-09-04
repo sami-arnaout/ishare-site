@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iSharePhotos – App (Upload + Browse + Data)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#0b1220; --panel:#0f172a; --muted:#93a3b8; --text:#e6edf6; --chip:#19233a; --card:#0b1220; --accent:#38bdf8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--text); }
+  a { color: var(--accent); text-decoration: none; }
+  .wrap { max-width: 1200px; margin:0 auto; padding: 24px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;}
+  h1 { font-size: 1.5rem; margin:0; }
+  .tabs { display:flex; gap:10px; }
+  .tabbtn { background:#13223b; color:#e6edf6; border:1px solid #25406c; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:700; }
+  .tabbtn.active { background:var(--accent); color:#07121e; border-color: transparent; }
+  .panel { background:var(--panel); border:1px solid #1f2a44; border-radius:14px; padding:18px; margin-top:16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .input { background:#0b1326; color:#e6edf6; border:1px solid #1f2a44; border-radius:10px; padding:10px 12px; }
+  .btn { background:var(--accent); color:#07121e; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:700; }
+  .btn.secondary { background:#22314f; color:#e6edf6; }
+  .hint { color:var(--muted); font-size:.95rem; }
+  .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+  @media (max-width: 1000px){ .grid { grid-template-columns: repeat(2, 1fr);} }
+  @media (max-width: 560px){ .grid { grid-template-columns: 1fr;} }
+  .card { background:var(--card); border:1px solid #1f2a44; border-radius:12px; overflow:hidden; }
+  .thumb { width:100%; aspect-ratio: 4/3; object-fit: cover; display:block; background:#0a0f1d; }
+  .meta { padding:10px 12px; font-size:.9rem; color:var(--muted); display:flex; flex-direction:column; gap:6px; }
+  #map { height: 420px; border-radius:12px; border:1px solid #1f2a44; }
+  pre { background:#0b1326; padding:12px; border-radius:10px; border:1px solid #1f2a44; overflow:auto; }
+  table { width:100%; border-collapse: collapse; }
+  th, td { padding:8px 10px; border-bottom:1px solid #1f2a44; text-align:left; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>iSharePhotos</h1>
+    <nav class="tabs">
+      <button class="tabbtn active" data-tab="upload">Upload</button>
+      <button class="tabbtn" data-tab="browse">Browse</button>
+      <button class="tabbtn" data-tab="data">Data</button>
+    </nav>
+  </header>
+
+  <!-- Upload tab -->
+  <section id="tab-upload" class="panel">
+    <h2 style="margin-top:0">Upload</h2>
+    <p class="hint">JPEG/HEIC only. Photo must include GPS in EXIF.</p>
+    <div class="row">
+      <input id="file" type="file" accept="image/jpeg,image/heic,image/heif" class="input">
+      <button id="go" class="btn">Upload</button>
+    </div>
+    <pre id="out"></pre>
+  </section>
+
+  <!-- Browse tab -->
+  <section id="tab-browse" class="panel" style="display:none">
+    <h2 style="margin-top:0">Browse</h2>
+    <div class="row">
+      <div>
+        <div class="hint">Place or ZIP</div>
+        <div class="row">
+          <input id="placeQuery" class="input" type="text" placeholder="e.g., 04107 or Times Square" size="28">
+          <button id="searchPlace" class="btn">Search</button>
+          <button id="nearMe" class="btn secondary">Near me</button>
+        </div>
+      </div>
+      <div>
+        <div class="hint">Date range</div>
+        <div class="row">
+          <input id="fromDate" class="input" type="date">
+          <span>–</span>
+          <input id="toDate" class="input" type="date">
+        </div>
+      </div>
+      <div>
+        <div class="hint">Radius (km)</div>
+        <div class="row">
+          <input id="radiusKm" class="input" type="number" step="0.1" value="4.8" title="~3 miles">
+          <button id="useMapCenter" class="btn secondary">Use Map Center</button>
+        </div>
+        <div class="hint">Radius applies only when a center is set.</div>
+      </div>
+      <div style="margin-left:auto">
+        <div class="row">
+          <button id="refresh" class="btn secondary">Refresh</button>
+          <button id="applyFilters" class="btn">Filter</button>
+          <button id="resetFilters" class="btn secondary">Reset</button>
+        </div>
+      </div>
+    </div>
+    <div id="map" style="margin-top:10px"></div>
+    <div id="mapStatus" class="hint" style="margin-top:6px;"></div>
+    <div id="count" class="hint" style="margin-top:6px;"></div>
+    <div id="grid" class="grid" style="margin-top:12px;"></div>
+  </section>
+
+  <!-- Data tab -->
+  <section id="tab-data" class="panel" style="display:none">
+    <h2 style="margin-top:0">Data</h2>
+    <div class="row" style="justify-content:space-between">
+      <div class="hint">A light table view for debugging.</div>
+      <button id="reloadData" class="btn secondary">Reload</button>
+    </div>
+    <div id="tableWrap" style="margin-top:10px; overflow:auto">
+      <table id="table">
+        <thead><tr><th>Date</th><th>Lat</th><th>Lon</th><th>Thumb</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+  import exifr from 'https://esm.sh/exifr@7?bundle';
+  import heic2any from 'https://esm.sh/heic2any@0.0.4?bundle';
+
+  // === Supabase (public anon is OK for pilot) ===
+  const SUPABASE_URL  = 'https://mctkvmwaflsnohpjfmta.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jdGt2bXdhZmxzbm9ocGpmbXRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMTk5MTEsImV4cCI6MjA3MjU5NTkxMX0.6vUzyxbE8K4z6GH-_n5R7FUnWaD6Yha9eP45YZ0Ih28';
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // === Tabs ===
+  const tabs = document.querySelectorAll('.tabbtn');
+  const sections = {
+    upload: document.getElementById('tab-upload'),
+    browse: document.getElementById('tab-browse'),
+    data: document.getElementById('tab-data'),
+  };
+  let map, photoLayer, centerMarker, mapReady=false;
+  tabs.forEach(btn => btn.addEventListener('click', () => {
+    tabs.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    for (const k in sections){ sections[k].style.display = (k===tab?'block':'none'); }
+    if (tab==='browse' && !mapReady) initMap();
+    if (tab==='data') renderTable();
+  }));
+
+  // === Upload ===
+  const $ = id => document.getElementById(id);
+  const log = (...a) => { $('out').textContent += a.join(' ') + '\\n'; };
+  $('out').textContent = 'Ready.';
+
+  async function readExif(file){
+    const [gps, meta] = await Promise.all([ exifr.gps(file), exifr.parse(file, ['DateTimeOriginal','Make','Model']) ]);
+    if (!gps || typeof gps.latitude !== 'number' || typeof gps.longitude !== 'number') {
+      throw new Error('No GPS found in EXIF');
+    }
+    const when = meta?.DateTimeOriginal ? new Date(meta.DateTimeOriginal) : new Date(file.lastModified);
+    return { lat:gps.latitude, lon:gps.longitude, takenAt:when, make:meta?.Make, model:meta?.Model };
+  }
+  async function toJpegIfHeic(file){
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.heic') || name.endsWith('.heif') || /heic|heif/i.test(file.type)) {
+      const out = await heic2any({ blob:file, toType:'image/jpeg', quality:0.9 });
+      return new File([out], (file.name||'photo').replace(/\\.(heic|heif)$/i,'.jpg'), { type:'image/jpeg' });
+    }
+    return file;
+  }
+  async function makeThumb(jpeg){
+    const img = new Image(), url = URL.createObjectURL(jpeg);
+    await new Promise((ok,err)=>{ img.onload=ok; img.onerror=err; img.src=url; });
+    const max = 1280, s = Math.min(1, max/Math.max(img.width,img.height));
+    const c = document.createElement('canvas'); c.width = img.width*s; c.height = img.height*s;
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    const blob = await new Promise(res => c.toBlob(res,'image/jpeg',0.82));
+    URL.revokeObjectURL(url);
+    return new File([blob], 'thumb.jpg', {type:'image/jpeg'});
+  }
+  const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString();
+
+  $('go').onclick = async () => {
+    $('out').textContent='';
+    const file = $('file').files[0];
+    if (!file) { log('Pick a file first.'); return; }
+    try {
+      log('Reading EXIF...');
+      const ex = await readExif(file);
+      log('GPS:', ex.lat.toFixed(6), ex.lon.toFixed(6), 'Time:', ex.takenAt.toISOString());
+
+      log('Converting to JPEG if needed...');
+      const jpeg = await toJpegIfHeic(file);
+
+      log('Creating thumbnail...');
+      const thumb = await makeThumb(jpeg);
+
+      const stamp = Date.now();
+      const safeName = (jpeg.name||'photo.jpg').replace(/[^a-z0-9_.-]/gi,'_');
+      const origPath  = `orig/${stamp}-${safeName}`;
+      const thumbPath = `thumb/${stamp}-thumb.jpg`;
+
+      log('Uploading original...');
+      const { error: e1 } = await sb.storage.from('photos-original').upload(origPath, jpeg, { contentType:'image/jpeg' });
+      if (e1) throw e1;
+
+      log('Uploading thumbnail...');
+      const { error: e2 } = await sb.storage.from('photos-thumb').upload(thumbPath, thumb, { contentType:'image/jpeg' });
+      if (e2) throw e2;
+
+      log('Saving metadata...');
+      const { error: e3 } = await sb.from('photos').insert({
+        user_id: null,
+        lat: ex.lat, lon: ex.lon,
+        taken_at: iso(ex.takenAt),
+        storage_path: origPath,
+        thumb_path: thumbPath,
+        device_make: ex.make || null,
+        device_model: ex.model || null
+      });
+      if (e3) throw e3;
+
+      log('✅ Done. Photo saved & searchable.');
+    } catch (err) {
+      log('❌ ' + (err?.message || String(err)));
+    }
+  };
+
+  // === Browse ===
+  let all = [];
+  async function fetchAll(){
+    const { data, error } = await sb
+      .from('photos')
+      .select('id,lat,lon,taken_at,thumb_path,storage_path')
+      .order('taken_at', { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+    all = (data || []).map(row => {
+      let thumbUrl = null;
+      if (row.thumb_path) {
+        thumbUrl = sb.storage.from('photos-thumb').getPublicUrl(row.thumb_path).data.publicUrl;
+      } else if (row.storage_path) {
+        thumbUrl = sb.storage.from('photos-original').getPublicUrl(row.storage_path).data.publicUrl;
+      }
+      return {
+        id: row.id, lat: row.lat, lon: row.lon,
+        date: row.taken_at?.slice(0,10) || '',
+        time: row.taken_at ? new Date(row.taken_at).toTimeString().slice(0,5) : '',
+        thumbUrl
+      };
+    });
+  }
+  function distanceKm(lat1, lon1, lat2, lon2){
+    const toRad = d => d*Math.PI/180, R=6371;
+    const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+  let latCenter=null, lonCenter=null;
+  function applyFilters(){
+    const from = document.getElementById('fromDate').value;
+    const to = document.getElementById('toDate').value;
+    const rad = parseFloat(document.getElementById('radiusKm').value);
+    const useGeo = (latCenter!=null && lonCenter!=null && !isNaN(rad));
+    const list = all.filter(it => {
+      const okDate = (!from || it.date >= from) && (!to || it.date <= to);
+      const okGeo = !useGeo || distanceKm(it.lat, it.lon, latCenter, lonCenter) <= rad;
+      return okDate && okGeo;
+    });
+    render(list);
+  }
+  function render(list){
+    const grid = document.getElementById('grid');
+    grid.innerHTML='';
+    if(list.length === 0){
+      grid.innerHTML = '<div class="hint">No photos match. Try widening date or radius.</div>';
+    } else {
+      for (const it of list){
+        const el = document.createElement('div');
+        el.className = 'card';
+        const img = it.thumbUrl ? `<img class="thumb" src="${it.thumbUrl}" alt="photo">` : `<div class="thumb"></div>`;
+        el.innerHTML = `${img}
+          <div class="meta">
+            <div>${it.date} ${it.time}</div>
+            <div class="hint">lat ${it.lat.toFixed(5)}, lon ${it.lon.toFixed(5)}</div>
+          </div>`;
+        grid.appendChild(el);
+      }
+    }
+    photoLayer.clearLayers();
+    for (const it of list){
+      const m = L.marker([it.lat, it.lon]).addTo(photoLayer);
+      const img = it.thumbUrl ? `<img src="${it.thumbUrl}" style="width:100%;border-radius:8px;margin-top:6px;">` : '';
+      m.bindPopup(`<div style="max-width:240px;"><strong>${it.date} ${it.time}</strong>${img}</div>`);
+    }
+    if (list.length){
+      const b = L.latLngBounds(list.map(i => [i.lat, i.lon]));
+      map.fitBounds(b, { padding:[20,20] });
+    }
+    document.getElementById('count').textContent = `${list.length} photo(s)`;
+  }
+  function updateMapStatus(){
+    const c = map.getCenter();
+    document.getElementById('mapStatus').textContent = `Map center: ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)} — zoom ${map.getZoom()}`;
+  }
+  async function geocodePlace(q){
+    const isZip = /^\\d{5}$/.test(q);
+    if (isZip){
+      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&postalcode=${encodeURIComponent(q)}&limit=1`;
+      const res = await fetch(url);
+      if (res.ok){
+        const data = await res.json();
+        if (data?.length) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      }
+      const url2 = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q+' United States')}&countrycodes=us&limit=1`;
+      const res2 = await fetch(url2);
+      const data2 = await res2.json();
+      if (data2?.length) return { lat: parseFloat(data2[0].lat), lon: parseFloat(data2[0].lon) };
+      throw new Error('ZIP not found');
+    } else {
+      const urlUS = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=us&limit=1`;
+      let res = await fetch(urlUS);
+      let data = res.ok ? await res.json() : [];
+      if (!data?.length){
+        const urlAny = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+        res = await fetch(urlAny); data = res.ok ? await res.json() : [];
+      }
+      if (data?.length) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      throw new Error('Place not found');
+    }
+  }
+  function initMap(){
+    map = L.map('map', { zoomControl: true }).setView([20,0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+    photoLayer = L.layerGroup().addTo(map);
+    centerMarker = L.marker(map.getCenter(), {draggable:true, opacity:0.7}).addTo(map);
+    map.on('move', ()=> { centerMarker.setLatLng(map.getCenter()); updateMapStatus(); });
+    centerMarker.on('dragend', ()=> { map.panTo(centerMarker.getLatLng()); updateMapStatus(); });
+    map.on('click', e => map.panTo(e.latlng));
+    mapReady = true;
+    updateMapStatus();
+
+    document.getElementById('searchPlace').onclick = async () => {
+      const q = document.getElementById('placeQuery').value.trim(); if(!q) return;
+      try { const r = await geocodePlace(q); map.setView([r.lat, r.lon], 13); centerMarker.setLatLng([r.lat,r.lon]); updateMapStatus(); }
+      catch(e){ document.getElementById('mapStatus').textContent = e.message; }
+    };
+    document.getElementById('nearMe').onclick = () => {
+      if (!navigator.geolocation) return alert('Geolocation not supported');
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude } = pos.coords;
+        map.setView([latitude, longitude], 15);
+        centerMarker.setLatLng([latitude, longitude]);
+        updateMapStatus();
+      }, ()=> alert('Unable to get your location'));
+    };
+    document.getElementById('useMapCenter').onclick = () => {
+      const c = map.getCenter(); latCenter = c.lat; lonCenter = c.lng;
+    };
+    document.getElementById('applyFilters').onclick = applyFilters;
+    document.getElementById('resetFilters').onclick = () => { 
+      document.getElementById('fromDate').value='';
+      document.getElementById('toDate').value='';
+      latCenter = lonCenter = null;
+      render(all);
+    };
+    document.getElementById('refresh').onclick = async () => { await fetchAll(); render(all); };
+    // First load
+    fetchAll().then(()=>render(all));
+  }
+
+  // === Data tab ===
+  function renderTable(){
+    const tbody = document.querySelector('#table tbody');
+    tbody.innerHTML='';
+    for (const it of all){
+      const tr = document.createElement('tr');
+      const url = it.thumbUrl || '';
+      tr.innerHTML = `<td>${it.date} ${it.time}</td><td>${it.lat.toFixed(5)}</td><td>${it.lon.toFixed(5)}</td><td>${url?`<a href="${url}" target="_blank">open</a>`:''}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+  document.getElementById('reloadData').onclick = async () => { await fetchAll(); renderTable(); };
+</script>
+</body>
+</html>

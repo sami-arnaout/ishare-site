@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/browse", "destination": "/iSharePhotos_map_search_demo_v3.html" }
+  ]
+}
